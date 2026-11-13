@@ -50,10 +50,14 @@ else:
 
 def get_db_connection():
     """Функция создания подключения к удаленной базе данных PostgreSQL"""
+    db_name = config.get('Database', 'database', fallback=None)
+    if not db_name:
+        db_name = config.get('Database', 'dbname', fallback='real_estate_db')
+
     return psycopg2.connect(
-        host=config.get('Database', 'host', fallback='127.0.0.1'),
-        port=config.getint('Database', 'port', fallback=5432),
-        database=config.get('Database', 'dbname', fallback='estate_db'),
+        host=config.get('Database', 'host', fallback='37.187.139.87'),
+        port=config.getint('Database', 'port', fallback=35919), # Указываем публичный порт FadeHost по умолчанию
+        database=db_name,
         user=config.get('Database', 'user', fallback='postgres'),
         password=config.get('Database', 'password', fallback='')
     )
@@ -711,53 +715,59 @@ class MainWindow(QMainWindow):
             return
             
         progress = QProgressBar()
-        progress.setWindowTitle("Загрузка медиафайлов в облако")
+        progress.setWindowTitle("Загрузка медиафайлов по SFTP")
         progress.setRange(0, len(files))
         progress.show()
         
         saved_files_count = 0
 
-        # Структурированная отправка на FTP-сервер из памяти
         try:
-            from ftplib import FTP
-            ftp = FTP()
-            ftp.connect(config.get('Server', 'host'), config.getint('Server', 'port', fallback=21))
-            ftp.login(config.get('Server', 'username'), config.get('Server', 'password'))
+            import paramiko
 
-            def ftp_mkdir_p(ftp_client, remote_path):
-                dirs = remote_path.strip("/").split("/")
-                current = ""
-                for d in dirs:
-                    if d:
-                        current += f"/{d}"
-                        try:
-                            ftp_client.cwd(current)
-                        except Exception:
-                            ftp_client.mkd(current)
-                            ftp_client.cwd(current)
+            sftp_host = config.get('Server', 'host', fallback='eu1.fadehost.net')
+            sftp_port = config.getint('Server', 'port', fallback=2022)
+            sftp_user = config.get('Server', 'username', fallback='app-xd4hdahvyv')
+            sftp_pass = config.get('Server', 'password', fallback='')
 
-            remote_path = f"{cat}/{p_type}/{r}/{ad_num}"
-            ftp_mkdir_p(ftp, remote_path)
-            ftp.cwd(f"/{remote_path}")
+            transport = paramiko.Transport((sftp_host, sftp_port))
+            transport.connect(username=sftp_user, password=sftp_pass)
+            sftp = paramiko.SFTPClient.from_transport(transport)
+
+            # Функция для рекурсивного создания папок по SFTP
+            def sftp_mkdir_p(sftp_client, remote_directory):
+                dir_path = ''
+                for folder in remote_directory.strip('/').split('/'):
+                    dir_path += f'/{folder}'
+                    try:
+                        sftp_client.stat(dir_path)
+                    except IOError:
+                        sftp_client.mkdir(dir_path)
+
+            remote_path = f"/{cat}/{p_type}/{r}/{ad_num}"
+            sftp_mkdir_p(sftp, remote_path)
 
             for i, file_path in enumerate(files):
                 file_name = os.path.basename(file_path)
-                with open(file_path, 'rb') as f_obj:
-                    ftp.storbinary(f"STOR {file_name}", f_obj)
+                remote_file_path = f"{remote_path}/{file_name}"
+                
+                sftp.put(file_path, remote_file_path)
                 saved_files_count += 1
                 progress.setValue(i + 1)
-                    
-            ftp.quit()
-            logging.info(f"Оператор {self.user_info['username']} отправил {saved_files_count} файлов на FTP в папку '{remote_path}'.")
+
+            sftp.close()
+            transport.close()
+            logging.info(f"Оператор {self.user_info['username']} отправил {saved_files_count} файлов по SFTP в папку '{remote_path}'.")
         except Exception as e:
-            logging.warning(f"Ошибка отправки на FTP: {e}")
+            logging.warning(f"Ошибка отправки по SFTP: {e}")
+            QMessageBox.critical(self, "Ошибка SFTP", f"Не удалось загрузить файлы: {e}")
 
         progress.close()
         if target_checkbox:
             target_checkbox.setChecked(False)
         
-        QMessageBox.information(self, "Успех", f"Медиафайлы ({saved_files_count} шт.) успешно загружены в облачное хранилище!")
-        self.load_table_data()
+        if saved_files_count > 0:
+            QMessageBox.information(self, "Успех", f"Медиафайлы ({saved_files_count} шт.) успешно загружены по SFTP!")
+            self.load_table_data()
 
     def delete_records(self):
         rooms_list = ["1-room", "2-room", "3-room", "4-room", "5-room"]
