@@ -1,0 +1,13 @@
+[Server]
+host = ftp.yourserver.com
+port = 21
+username = ftp_user
+password = ftp_password
+use_sftp = False
+
+[Telegram]
+token = YOUR_TELEGRAM_BOT_TOKEN
+default_phone = +998901234567
+
+[Limits]
+max_video_size_mb = 50
